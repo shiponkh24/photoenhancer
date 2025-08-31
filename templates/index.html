@@ -152,6 +152,11 @@
                                         <i class="fas fa-cut me-2"></i>Select & Remove
                                     </button>
                                 </li>
+                                <li class="nav-item" role="presentation">
+                                    <button class="nav-link" id="transform-tab" data-bs-toggle="tab" data-bs-target="#transform-panel" type="button" role="tab">
+                                        <i class="fas fa-palette me-2"></i>Transform
+                                    </button>
+                                </li>
                             </ul>
 
                             <!-- Tool Panels -->
@@ -276,6 +281,32 @@
                                             </div>
                                             <button id="apply-selection-btn" class="btn btn-primary">
                                                 <i class="fas fa-cut me-2"></i>Remove Selected Areas
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Transform Panel -->
+                                <div class="tab-pane fade" id="transform-panel" role="tabpanel">
+                                    <div class="row">
+                                        <div class="col-md-8">
+                                            <h6 class="mb-3">Make AI Images Look Natural & Human-Made</h6>
+                                            <p class="mb-2">Transform AI-generated images to appear authentic with natural imperfections:</p>
+                                            <ul class="small text-muted mb-3">
+                                                <li>Adds realistic film grain and organic textures</li>
+                                                <li>Creates natural lighting variations and subtle shadows</li>
+                                                <li>Introduces color temperature variations and depth of field</li>
+                                                <li>Removes digital perfection for a handcrafted feel</li>
+                                            </ul>
+                                            <div class="mb-3">
+                                                <label for="humanize-intensity" class="form-label">Transform Intensity</label>
+                                                <input type="range" class="form-range" id="humanize-intensity" min="0.3" max="1.0" step="0.1" value="0.7">
+                                                <div class="text-center"><small id="humanize-intensity-value">70%</small></div>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-4 d-flex align-items-end">
+                                            <button id="humanize-btn" class="btn btn-primary w-100">
+                                                <i class="fas fa-palette me-2"></i>Transform to Natural
                                             </button>
                                         </div>
                                     </div>

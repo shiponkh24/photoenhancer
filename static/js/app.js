@@ -35,6 +35,7 @@ function initializeEventListeners() {
     document.getElementById('resize-btn').addEventListener('click', () => processImage('resize'));
     document.getElementById('remove-bg-btn').addEventListener('click', () => processImage('remove_background'));
     document.getElementById('apply-selection-btn').addEventListener('click', () => processImage('remove_area'));
+    document.getElementById('humanize-btn').addEventListener('click', () => processImage('humanize'));
     
     // Reset button
     document.getElementById('reset-enhance-btn').addEventListener('click', resetEnhanceSliders);
@@ -79,6 +80,14 @@ function initializeSliders() {
     brushSizeSlider.addEventListener('input', (e) => {
         document.getElementById('brush-size-value').textContent = e.target.value + 'px';
     });
+    
+    // Humanize intensity slider
+    const humanizeSlider = document.getElementById('humanize-intensity');
+    if (humanizeSlider) {
+        humanizeSlider.addEventListener('input', (e) => {
+            document.getElementById('humanize-intensity-value').textContent = Math.round(e.target.value * 100) + '%';
+        });
+    }
 }
 
 // File handling functions
@@ -298,6 +307,9 @@ function processImage(operation) {
                 return;
             }
             params.mask_data = canvas.toDataURL();
+            break;
+        case 'humanize':
+            params.intensity = parseFloat(document.getElementById('humanize-intensity').value);
             break;
     }
     

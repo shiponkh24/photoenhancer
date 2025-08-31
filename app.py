@@ -115,6 +115,9 @@ def process_image():
             if not mask_data:
                 return jsonify({'error': 'Mask data required for area removal'}), 400
             result = processor.remove_selected_area(input_path, output_path, mask_data)
+        elif operation == 'humanize':
+            intensity = params.get('intensity', 0.7)
+            result = processor.humanize_image(input_path, output_path, intensity)
         else:
             return jsonify({'error': 'Invalid operation'}), 400
         
