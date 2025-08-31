@@ -331,8 +331,10 @@ function processImage(operation) {
         hideProcessingStatus();
         
         if (data.success) {
-            processedFilename = data.processed_filename;
-            displayProcessedImage(data.info);
+            // Automatically download the processed image
+            downloadImage(data.image_data, data.filename);
+            showProcessedImageInfo(data.info);
+            showAlert(`Image processed and downloaded as ${data.filename}!`, 'success');
         } else {
             showAlert(data.error || 'Processing failed', 'danger');
         }
@@ -344,11 +346,26 @@ function processImage(operation) {
     });
 }
 
+// Legacy function - no longer used since images auto-download
 function displayProcessedImage(info) {
-    const container = document.getElementById('processed-preview');
+    showProcessedImageInfo(info);
+}
+
+function downloadImage(imageData, filename) {
+    // Create download link element
+    const link = document.createElement('a');
+    link.href = imageData;
+    link.download = filename;
+    
+    // Trigger download
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
+
+function showProcessedImageInfo(info) {
     const infoDiv = document.getElementById('processed-info');
     const downloadSection = document.getElementById('download-section');
-    const zoomControls = document.getElementById('zoom-controls');
     const placeholder = document.getElementById('processed-placeholder');
     
     // Hide placeholder
@@ -356,34 +373,24 @@ function displayProcessedImage(info) {
         placeholder.style.display = 'none';
     }
     
-    // Create zoomable image
-    container.innerHTML = `<img id="processed-image" src="/preview/${processedFilename}" class="rounded" style="max-height: none; cursor: move; transition: transform 0.2s ease;">`;
-    
-    // Get reference to the image element
-    processedImageElement = document.getElementById('processed-image');
-    
-    // Reset zoom
-    currentZoom = 1.0;
-    updateZoomDisplay();
-    
-    // Make image draggable when zoomed
-    makeImageDraggable(processedImageElement);
-    
+    // Show processed info
     infoDiv.innerHTML = `
-        <small class="text-muted">
+        <small class="text-success">
+            <i class="fas fa-check-circle"></i> Image processed successfully!<br>
             ${info.width} × ${info.height} pixels | 
             ${info.format} | 
-            ${info.size_mb} MB
+            ${info.size_mb} MB<br>
+            <strong>Downloaded to your device</strong>
         </small>
     `;
     
-    downloadSection.classList.remove('d-none');
-    zoomControls.classList.remove('d-none');
-}
-
-function downloadProcessedImage() {
-    if (processedFilename) {
-        window.open(`/download/${processedFilename}`, '_blank');
+    // Hide zoom controls and download section since image is auto-downloaded
+    const zoomControls = document.getElementById('zoom-controls');
+    if (zoomControls) {
+        zoomControls.classList.add('d-none');
+    }
+    if (downloadSection) {
+        downloadSection.classList.add('d-none');
     }
 }
 

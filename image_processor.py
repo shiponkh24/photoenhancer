@@ -51,7 +51,11 @@ class ImageProcessor:
                 enhancer = ImageEnhance.Sharpness(upscaled)
                 upscaled = enhancer.enhance(1.2)
                 
-                # Save with appropriate format
+                # Return image data directly if no output path
+                if output_path is None:
+                    return self._image_to_response_data(upscaled, img.format)
+                
+                # Save with appropriate format (legacy support)
                 if img.format == 'PNG' or img.mode in ('RGBA', 'LA'):
                     upscaled.save(output_path, 'PNG', optimize=True)
                 else:
@@ -67,6 +71,8 @@ class ImageProcessor:
         """Enhance image with brightness, contrast, and sharpness adjustments"""
         try:
             with Image.open(input_path) as img:
+                orig_format = img.format
+                
                 # Apply brightness enhancement
                 if brightness != 1.0:
                     enhancer = ImageEnhance.Brightness(img)
@@ -82,8 +88,12 @@ class ImageProcessor:
                     enhancer = ImageEnhance.Sharpness(img)
                     img = enhancer.enhance(sharpness)
                 
-                # Save with appropriate format
-                if img.format == 'PNG' or img.mode in ('RGBA', 'LA'):
+                # Return image data directly if no output path
+                if output_path is None:
+                    return self._image_to_response_data(img, orig_format)
+                
+                # Save with appropriate format (legacy support)
+                if orig_format == 'PNG' or img.mode in ('RGBA', 'LA'):
                     img.save(output_path, 'PNG', optimize=True)
                 else:
                     img.save(output_path, 'JPEG', quality=95, optimize=True)
@@ -98,11 +108,17 @@ class ImageProcessor:
         """Resize image to specific dimensions"""
         try:
             with Image.open(input_path) as img:
+                orig_format = img.format
+                
                 # Resize using high-quality resampling
                 resized = img.resize((width, height), Image.Resampling.LANCZOS)
                 
-                # Save with appropriate format
-                if img.format == 'PNG' or img.mode in ('RGBA', 'LA'):
+                # Return image data directly if no output path
+                if output_path is None:
+                    return self._image_to_response_data(resized, orig_format)
+                
+                # Save with appropriate format (legacy support)
+                if orig_format == 'PNG' or img.mode in ('RGBA', 'LA'):
                     resized.save(output_path, 'PNG', optimize=True)
                 else:
                     resized.save(output_path, 'JPEG', quality=95, optimize=True)
@@ -134,7 +150,11 @@ class ImageProcessor:
                 # Convert back to PIL Image
                 result_img = Image.fromarray(img_array, 'RGBA')
                 
-                # Save as PNG to preserve transparency
+                # Return image data directly if no output path
+                if output_path is None:
+                    return self._image_to_response_data(result_img, 'PNG')
+                
+                # Save as PNG to preserve transparency (legacy support)
                 result_img.save(output_path.replace(os.path.splitext(output_path)[1], '.png'), 'PNG', optimize=True)
                 
                 return {'success': True}
@@ -253,10 +273,46 @@ class ImageProcessor:
         
         return smoothed.astype(np.uint8)
     
+    def _image_to_response_data(self, image, original_format):
+        """Convert PIL image to base64 data for client download"""
+        buffer = BytesIO()
+        
+        # Determine output format
+        if original_format == 'PNG' or image.mode in ('RGBA', 'LA'):
+            format_str = 'PNG'
+            image.save(buffer, format=format_str, optimize=True)
+        else:
+            format_str = 'JPEG'
+            # Convert RGBA to RGB if saving as JPEG
+            if image.mode == 'RGBA':
+                rgb_image = Image.new('RGB', image.size, (255, 255, 255))
+                rgb_image.paste(image, mask=image.split()[-1])
+                rgb_image.save(buffer, format=format_str, quality=95, optimize=True)
+            else:
+                image.save(buffer, format=format_str, quality=95, optimize=True)
+        
+        buffer.seek(0)
+        image_data = base64.b64encode(buffer.getvalue()).decode('utf-8')
+        
+        return {
+            'success': True,
+            'image_data': f"data:image/{format_str.lower()};base64,{image_data}",
+            'format': format_str,
+            'info': {
+                'width': image.width,
+                'height': image.height,
+                'format': format_str,
+                'mode': image.mode,
+                'size_mb': round(len(buffer.getvalue()) / (1024 * 1024), 2)
+            }
+        }
+    
     def humanize_image(self, input_path, output_path, intensity=0.7):
         """Transform AI-generated image to look more natural and human-made"""
         try:
             with Image.open(input_path) as img:
+                orig_format = img.format
+                
                 # Convert to RGB if necessary
                 if img.mode != 'RGB':
                     img = img.convert('RGB')
@@ -280,8 +336,12 @@ class ImageProcessor:
                 result_img = self._apply_natural_sharpening(result_img, intensity)
                 result_img = self._add_subtle_vignette(result_img, intensity)
                 
-                # Save with appropriate format
-                if img.format == 'PNG' or img.mode in ('RGBA', 'LA'):
+                # Return image data directly if no output path
+                if output_path is None:
+                    return self._image_to_response_data(result_img, orig_format)
+                
+                # Save with appropriate format (legacy support)
+                if orig_format == 'PNG' or img.mode in ('RGBA', 'LA'):
                     result_img.save(output_path, 'PNG', optimize=True)
                 else:
                     result_img.save(output_path, 'JPEG', quality=92, optimize=True)
@@ -566,7 +626,11 @@ class ImageProcessor:
                 # Convert back to PIL Image
                 result_img = Image.fromarray(img_array, 'RGBA')
                 
-                # Save as PNG to preserve transparency
+                # Return image data directly if no output path
+                if output_path is None:
+                    return self._image_to_response_data(result_img, 'PNG')
+                
+                # Save as PNG to preserve transparency (legacy support)
                 result_img.save(output_path.replace(os.path.splitext(output_path)[1], '.png'), 'PNG', optimize=True)
                 
                 return {'success': True}

@@ -1,5 +1,6 @@
 import os
 import logging
+import time
 from flask import Flask, render_template, request, jsonify, send_file, flash, redirect, url_for
 from werkzeug.utils import secure_filename
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -89,43 +90,44 @@ def process_image():
         if not os.path.exists(input_path):
             return jsonify({'error': 'Original file not found'}), 404
         
-        # Generate output filename
-        output_filename = f"processed_{uuid.uuid4()}_{filename}"
-        output_path = os.path.join(app.config['PROCESSED_FOLDER'], output_filename)
+        # Generate output filename for user download
+        base_name = os.path.splitext(filename)[0]
+        timestamp = str(int(time.time()))
         
-        # Process image based on operation
+        # Process image in memory and return data directly
         if operation == 'upscale':
             scale_factor = params.get('scale_factor', 2)
-            result = processor.upscale_image(input_path, output_path, scale_factor)
+            result = processor.upscale_image(input_path, None, scale_factor)
         elif operation == 'enhance':
             brightness = params.get('brightness', 1.0)
             contrast = params.get('contrast', 1.0)
             sharpness = params.get('sharpness', 1.0)
-            result = processor.enhance_image(input_path, output_path, brightness, contrast, sharpness)
+            result = processor.enhance_image(input_path, None, brightness, contrast, sharpness)
         elif operation == 'resize':
             width = params.get('width')
             height = params.get('height')
             if not width or not height:
                 return jsonify({'error': 'Width and height required for resize'}), 400
-            result = processor.resize_image(input_path, output_path, int(width), int(height))
+            result = processor.resize_image(input_path, None, int(width), int(height))
         elif operation == 'remove_background':
-            result = processor.remove_background(input_path, output_path)
+            result = processor.remove_background(input_path, None)
         elif operation == 'remove_area':
             mask_data = params.get('mask_data')
             if not mask_data:
                 return jsonify({'error': 'Mask data required for area removal'}), 400
-            result = processor.remove_selected_area(input_path, output_path, mask_data)
+            result = processor.remove_selected_area(input_path, None, mask_data)
         elif operation == 'humanize':
             intensity = params.get('intensity', 0.7)
-            result = processor.humanize_image(input_path, output_path, intensity)
+            result = processor.humanize_image(input_path, None, intensity)
         else:
             return jsonify({'error': 'Invalid operation'}), 400
         
         if result['success']:
             return jsonify({
                 'success': True,
-                'processed_filename': output_filename,
-                'info': processor.get_image_info(output_path)
+                'image_data': result['image_data'],
+                'filename': f"{base_name}_{operation}_{timestamp}.{result.get('format', 'jpg').lower()}",
+                'info': result['info']
             })
         else:
             return jsonify({'error': result['error']}), 500
