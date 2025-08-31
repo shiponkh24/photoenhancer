@@ -4,6 +4,11 @@ from PIL import Image, ImageEnhance, ImageFilter
 import numpy as np
 import json
 import base64
+try:
+    import onnxruntime as ort
+    ONNX_AVAILABLE = True
+except Exception:
+    ONNX_AVAILABLE = False
 from io import BytesIO
 
 # Background removal availability flag
@@ -136,27 +141,40 @@ class ImageProcessor:
                 # Convert to RGBA for transparency support
                 if img.mode != 'RGBA':
                     img = img.convert('RGBA')
-                
+                # If an ONNX U^2-Net model is available in static/models/u2net.onnx and
+                # onnxruntime is installed, prefer the model for accurate segmentation.
+                model_path = os.path.join('static', 'models', 'u2net.onnx')
+                if ONNX_AVAILABLE and os.path.exists(model_path):
+                    try:
+                        result_img = self._remove_background_onnx(img, model_path)
+                        if output_path is None:
+                            return self._image_to_response_data(result_img, 'PNG')
+                        result_img.save(output_path.replace(os.path.splitext(output_path)[1], '.png'), 'PNG', optimize=True)
+                        return {'success': True, 'info': self.get_image_info(output_path.replace(os.path.splitext(output_path)[1], '.png'))}
+                    except Exception as e:
+                        logging.warning(f"ONNX background removal failed, falling back to heuristic: {e}")
+
+                # Fallback: heuristic mask
                 # Convert to numpy array for processing
                 img_array = np.array(img)
                 height, width = img_array.shape[:2]
-                
+
                 # Create a mask based on edge detection and color analysis
                 mask = self._create_smart_background_mask(img_array)
-                
+
                 # Apply the mask to create transparency
                 img_array[:, :, 3] = mask  # Set alpha channel
-                
+
                 # Convert back to PIL Image
                 result_img = Image.fromarray(img_array, 'RGBA')
-                
+
                 # Return image data directly if no output path
                 if output_path is None:
                     return self._image_to_response_data(result_img, 'PNG')
-                
+
                 # Save as PNG to preserve transparency (legacy support)
                 result_img.save(output_path.replace(os.path.splitext(output_path)[1], '.png'), 'PNG', optimize=True)
-                
+
                 return {'success': True}
                 
         except Exception as e:
@@ -204,14 +222,20 @@ class ImageProcessor:
         # Combine methods to create final mask
         edge_threshold = np.percentile(edges, 85)  # Areas with strong edges are likely foreground
         
-        # Create mask: 255 (opaque) for foreground, 0 (transparent) for background
+        # Create initial mask: 255 (opaque) for foreground, 0 (transparent) for background
         mask = np.zeros((height, width), dtype=np.uint8)
-        
-        # Mark as foreground if:
-        # 1. Strong edges are present (detailed areas)
-        # 2. Color is significantly different from background
+
+        # Mark as foreground if strong edges are present or color is significantly different from background
         foreground_condition = (edges > edge_threshold) | (color_distances > color_threshold)
         mask[foreground_condition] = 255
+
+        # Improve mask by selecting components that look like the main subject.
+        # Use edge density + size + centrality to avoid removing white foreground subjects.
+        try:
+            mask = self._select_foreground_components(mask, edges)
+        except Exception:
+            # If component analysis fails, continue with existing mask
+            pass
         
         # Apply morphological operations to clean up the mask
         # Dilate to fill small gaps in foreground objects
@@ -235,6 +259,87 @@ class ImageProcessor:
         result = self._erode(dilated, kernel)
         
         return result
+
+    def _select_foreground_components(self, mask, edges):
+        """Select components likely to be the main subject using edge density, size, and centrality."""
+        h, w = mask.shape
+        label = np.zeros_like(mask, dtype=np.int32)
+        current_label = 1
+        components = []  # (label, size, centroid_y, centroid_x, edge_count)
+
+        # Binary edge map
+        edge_binary = (edges > np.percentile(edges, 85)).astype(np.uint8)
+
+        for i in range(h):
+            for j in range(w):
+                if mask[i, j] == 255 and label[i, j] == 0:
+                    # DFS/BFS flood fill
+                    stack = [(i, j)]
+                    label[i, j] = current_label
+                    size = 0
+                    sum_y = 0
+                    sum_x = 0
+                    edge_count = 0
+                    while stack:
+                        y, x = stack.pop()
+                        size += 1
+                        sum_y += y
+                        sum_x += x
+                        if edge_binary[y, x]:
+                            edge_count += 1
+                        for dy in (-1, 0, 1):
+                            for dx in (-1, 0, 1):
+                                ny, nx = y + dy, x + dx
+                                if 0 <= ny < h and 0 <= nx < w:
+                                    if mask[ny, nx] == 255 and label[ny, nx] == 0:
+                                        label[ny, nx] = current_label
+                                        stack.append((ny, nx))
+
+                    centroid_y = sum_y / size
+                    centroid_x = sum_x / size
+                    components.append((current_label, size, centroid_y, centroid_x, edge_count))
+                    current_label += 1
+
+        if len(components) == 0:
+            return mask
+
+        # Compute scores for components
+        sizes = np.array([c[1] for c in components], dtype=np.float32)
+        edge_counts = np.array([c[4] for c in components], dtype=np.float32)
+
+        size_norm = (sizes - sizes.min()) / (sizes.ptp() + 1e-9)
+        edge_norm = (edge_counts - edge_counts.min()) / (edge_counts.ptp() + 1e-9)
+
+        # Centrality: prefer components closer to image center
+        center_y, center_x = h / 2.0, w / 2.0
+        dists = np.array([np.sqrt((c[2]-center_y)**2 + (c[3]-center_x)**2) for c in components], dtype=np.float32)
+        dist_norm = (dists - dists.min()) / (dists.ptp() + 1e-9)
+        centrality = 1.0 - dist_norm
+
+        # Score weights: edge density most important, then size, then centrality
+        scores = 0.6 * edge_norm + 0.3 * size_norm + 0.1 * centrality
+
+        # Pick components with score >= 0.5 * max_score (cover multi-part subjects)
+        max_score = scores.max()
+        selected_labels = [components[i][0] for i in range(len(components)) if scores[i] >= 0.5 * max_score]
+
+        # Build new mask keeping selected labels
+        new_mask = np.zeros_like(mask)
+        for lbl in selected_labels:
+            new_mask[label == lbl] = 255
+
+        # If nothing selected (shouldn't happen), fallback to largest component
+        if new_mask.sum() == 0:
+            # Fallback: keep largest component
+            largest_idx = int(np.argmax(sizes))
+            largest_label = components[largest_idx][0]
+            new_mask[label == largest_label] = 255
+
+        # Clean up with morphological operations
+        kernel_size = max(3, min(h, w) // 200)
+        new_mask = self._morphological_operations(new_mask, kernel_size)
+
+        return new_mask
     
     def _dilate(self, image, kernel):
         """Simple dilation operation"""
@@ -306,6 +411,67 @@ class ImageProcessor:
                 'size_mb': round(len(buffer.getvalue()) / (1024 * 1024), 2)
             }
         }
+
+    def _remove_background_onnx(self, pil_img, model_path):
+        """Run U2-Net ONNX model to compute a high-quality alpha matte and apply it.
+
+        Expectations:
+        - `pil_img` is a PIL Image in RGBA mode.
+        - `model_path` points to a U2-Net ONNX model file (not provided in repo).
+
+        This function performs preprocessing, inference with onnxruntime, resizes the
+        mask to original image size, applies a soft threshold and morphological cleanup,
+        and returns a PIL RGBA image with background removed.
+        """
+        if not ONNX_AVAILABLE:
+            raise RuntimeError('onnxruntime not available')
+
+        # Preprocess: U2-Net typically expects 320x320 RGB normalized images
+        orig_w, orig_h = pil_img.size
+        # Use 320 as default, some u2net variants use 320
+        target = 320
+        img = pil_img.convert('RGB').copy()
+        img_resized = img.resize((target, target), Image.Resampling.BILINEAR)
+
+        arr = np.array(img_resized).astype(np.float32) / 255.0
+        # HWC -> CHW
+        inp = np.transpose(arr, (2, 0, 1))[np.newaxis, :]
+
+        # Run ONNX model
+        sess = ort.InferenceSession(model_path, providers=['CPUExecutionProvider'])
+        input_name = sess.get_inputs()[0].name
+        outs = sess.run(None, {input_name: inp})
+
+        # U2-Net returns a single-channel matte as output; find the right output
+        pred = outs[0]
+        # pred shape may be (1,1,320,320)
+        if pred.ndim == 4:
+            matte = pred[0, 0, :, :]
+        elif pred.ndim == 3:
+            matte = pred[0, :, :]
+        else:
+            matte = pred.squeeze()
+
+        # Normalize matte to 0-255
+        matte = (matte - matte.min()) / (matte.max() - matte.min() + 1e-9)
+        matte = (matte * 255).astype(np.uint8)
+
+        # Resize matte to original image size
+        matte_img = Image.fromarray(matte).resize((orig_w, orig_h), Image.Resampling.BILINEAR)
+        matte_arr = np.array(matte_img)
+
+        # Soft threshold and morphological cleanup
+        # Increase contrast of matte
+        thresh = np.percentile(matte_arr, 50)
+        mask = (matte_arr > thresh).astype(np.uint8) * 255
+        kernel_size = max(3, min(orig_h, orig_w) // 200)
+        mask = self._morphological_operations(mask, kernel_size)
+        mask = self._smooth_mask_edges(mask)
+
+        # Apply mask as alpha channel
+        img_arr = np.array(pil_img.convert('RGBA'))
+        img_arr[:, :, 3] = mask
+        return Image.fromarray(img_arr, 'RGBA')
     
     def humanize_image(self, input_path, output_path, intensity=0.7):
         """Transform AI-generated image to look more natural and human-made"""

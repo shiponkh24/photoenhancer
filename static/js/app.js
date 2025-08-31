@@ -22,7 +22,7 @@ function initializeEventListeners() {
     const uploadArea = document.getElementById('upload-area');
     
     fileInput.addEventListener('change', handleFileSelect);
-    uploadArea.addEventListener('click', () => fileInput.click());
+    // Removed uploadArea click handler to prevent double prompt
     
     // Drag and drop
     uploadArea.addEventListener('dragover', handleDragOver);
@@ -47,6 +47,12 @@ function initializeEventListeners() {
     
     // Download button
     document.getElementById('download-btn').addEventListener('click', downloadProcessedImage);
+    // Mockup buttons
+    const createMockupBtn = document.getElementById('create-mockup-btn');
+    if (createMockupBtn) createMockupBtn.addEventListener('click', createMockup);
+    const downloadMockupBtn = document.getElementById('download-mockup-btn');
+    if (downloadMockupBtn) downloadMockupBtn.addEventListener('click', downloadMockup);
+    document.querySelectorAll('.mockup-color').forEach(btn => btn.addEventListener('click', selectMockupColor));
     
     // Aspect ratio maintenance
     document.getElementById('new-width').addEventListener('input', maintainAspectRatio);
@@ -95,6 +101,8 @@ function handleFileSelect(event) {
     const file = event.target.files[0];
     if (file) {
         uploadFile(file);
+        // Reset the input so selecting the same file again will trigger change
+        event.target.value = '';
     }
 }
 
@@ -331,10 +339,10 @@ function processImage(operation) {
         hideProcessingStatus();
         
         if (data.success) {
-            // Automatically download the processed image
-            downloadImage(data.image_data, data.filename);
+            // Display processed image in the UI and enable manual download
+            renderProcessedImage(data.image_data, data.filename);
             showProcessedImageInfo(data.info);
-            showAlert(`Image processed and downloaded as ${data.filename}!`, 'success');
+            showAlert(`Image processed: ${data.filename}. Click Download Result to save.`, 'success');
         } else {
             showAlert(data.error || 'Processing failed', 'danger');
         }
@@ -363,6 +371,50 @@ function downloadImage(imageData, filename) {
     document.body.removeChild(link);
 }
 
+// New: render processed image into the processed preview area and enable download button
+function renderProcessedImage(imageData, filename) {
+    const processedPreview = document.getElementById('processed-preview');
+    const downloadSection = document.getElementById('download-section');
+    const zoomControls = document.getElementById('zoom-controls');
+
+    // Remove any previous image element
+    if (processedImageElement) {
+        processedImageElement.remove();
+        processedImageElement = null;
+    }
+
+    // Create image element
+    const img = document.createElement('img');
+    img.src = imageData;
+    img.alt = filename;
+    img.className = 'img-fluid rounded';
+    img.style.maxHeight = '500px';
+    img.style.cursor = 'default';
+    img.style.transition = 'transform 0.1s ease';
+
+    processedPreview.appendChild(img);
+    processedImageElement = img;
+
+    // Show zoom controls
+    if (zoomControls) {
+        zoomControls.classList.remove('d-none');
+    }
+
+    // Show download section and attach filename to button dataset
+    if (downloadSection) {
+        downloadSection.classList.remove('d-none');
+        const btn = document.getElementById('download-btn');
+        btn.dataset.filename = filename;
+    }
+
+    // Make image draggable when zoomed
+    makeImageDraggable(img);
+
+    // Enable mockup controls
+    const mockupControls = document.getElementById('mockup-controls');
+    if (mockupControls) mockupControls.classList.remove('d-none');
+}
+
 function showProcessedImageInfo(info) {
     const infoDiv = document.getElementById('processed-info');
     const downloadSection = document.getElementById('download-section');
@@ -380,17 +432,138 @@ function showProcessedImageInfo(info) {
             ${info.width} × ${info.height} pixels | 
             ${info.format} | 
             ${info.size_mb} MB<br>
-            <strong>Downloaded to your device</strong>
+            <strong>Click "Download Result" to save the processed image</strong>
         </small>
     `;
     
-    // Hide zoom controls and download section since image is auto-downloaded
+    // Keep zoom controls and download section visible when a processed image is present
     const zoomControls = document.getElementById('zoom-controls');
-    if (zoomControls) {
-        zoomControls.classList.add('d-none');
+    if (zoomControls && processedImageElement) {
+        zoomControls.classList.remove('d-none');
     }
-    if (downloadSection) {
-        downloadSection.classList.add('d-none');
+    if (downloadSection && processedImageElement) {
+        downloadSection.classList.remove('d-none');
+    }
+}
+
+// Mockup functionality
+let mockupColor = '#ffffff';
+let mockupCanvas = null;
+let mockupCtx = null;
+
+function createMockup() {
+    if (!processedImageElement) {
+        showAlert('No processed image to create mockup from', 'warning');
+        return;
+    }
+
+    mockupCanvas = document.getElementById('mockup-canvas');
+    mockupCtx = mockupCanvas.getContext('2d');
+
+    // Load tshirt mock image if available
+    const tshirtImg = new Image();
+    tshirtImg.onload = () => renderMockup(tshirtImg);
+    tshirtImg.onerror = () => renderMockup(null);
+    tshirtImg.src = '/static/images/tshirt_mock.png';
+
+    document.getElementById('download-mockup-btn').classList.remove('d-none');
+}
+
+function renderMockup(tshirtImg) {
+    const canvas = mockupCanvas;
+    const ctx = mockupCtx;
+    const width = 800;
+    const height = 900;
+    canvas.width = width;
+    canvas.height = height;
+
+    // Draw colored t-shirt background
+    ctx.fillStyle = mockupColor;
+    ctx.fillRect(0, 0, width, height);
+
+    // If tshirt image provided, draw it on top to show shape
+    if (tshirtImg) {
+        // Fit the tshirt mock into canvas
+        const tshirtW = width * 0.95;
+        const tshirtH = height * 0.95;
+        const x = (width - tshirtW) / 2;
+        const y = (height - tshirtH) / 2;
+        ctx.drawImage(tshirtImg, x, y, tshirtW, tshirtH);
+    }
+
+    // Draw the processed image centered on the chest area
+    const img = processedImageElement;
+    const targetW = Math.floor(width * 0.5);
+    const aspect = img.naturalWidth / img.naturalHeight;
+    const targetH = Math.floor(targetW / aspect);
+    const imgX = Math.floor((width - targetW) / 2);
+    const imgY = Math.floor(height * 0.28);
+
+    // Create an offscreen image to ensure CORS/dataURL works
+    const drawImg = new Image();
+    drawImg.onload = () => {
+        // Optionally add a subtle shadow
+        ctx.save();
+        ctx.globalAlpha = 0.95;
+        ctx.drawImage(drawImg, imgX, imgY, targetW, targetH);
+        ctx.restore();
+    };
+    drawImg.src = img.src;
+}
+
+function selectMockupColor(e) {
+    mockupColor = e.currentTarget.dataset.color || '#ffffff';
+    // re-render mockup if canvas exists
+    const tshirtImg = new Image();
+    tshirtImg.onload = () => renderMockup(tshirtImg);
+    tshirtImg.onerror = () => renderMockup(null);
+    tshirtImg.src = '/static/images/tshirt_mock.png';
+}
+
+function downloadMockup() {
+    if (!mockupCanvas) return showAlert('No mockup available', 'warning');
+    const dataUrl = mockupCanvas.toDataURL('image/png');
+    downloadImage(dataUrl, 'tshirt_mockup.png');
+}
+
+// Download handler attached to Download button
+function downloadProcessedImage() {
+    const btn = document.getElementById('download-btn');
+    const filename = btn.dataset.filename;
+
+    // Prefer server-provided download endpoint if available. Use fetch to get blob and trigger download.
+    if (filename) {
+        const downloadUrl = `/download/${encodeURIComponent(filename)}`;
+        fetch(downloadUrl)
+            .then(resp => {
+                if (!resp.ok) throw new Error('Download failed');
+                return resp.blob();
+            })
+            .then(blob => {
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                URL.revokeObjectURL(url);
+                showAlert(`Download started for ${filename}`, 'info');
+            })
+            .catch(err => {
+                console.error('Download error:', err);
+                // Fallback to data URL if available
+                if (processedImageElement && processedImageElement.src) {
+                    downloadImage(processedImageElement.src, filename || 'processed_image.png');
+                } else {
+                    showAlert('No processed image available to download', 'warning');
+                }
+            });
+    } else if (processedImageElement && processedImageElement.src) {
+        // Fallback: download blob data from data URL
+        downloadImage(processedImageElement.src, filename || 'processed_image.png');
+    } else {
+        showAlert('No processed image available to download', 'warning');
     }
 }
 

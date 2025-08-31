@@ -7,6 +7,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 import uuid
 from image_processor import ImageProcessor
 import json
+import base64
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
@@ -123,12 +124,48 @@ def process_image():
             return jsonify({'error': 'Invalid operation'}), 400
         
         if result['success']:
-            return jsonify({
-                'success': True,
-                'image_data': result['image_data'],
-                'filename': f"{base_name}_{operation}_{timestamp}.{result.get('format', 'jpg').lower()}",
-                'info': result['info']
-            })
+            # If processor returned image_data (base64 data URL), save it to processed folder
+            out_filename = f"{base_name}_{operation}_{timestamp}.{result.get('format', 'jpg').lower()}"
+            try:
+                if 'image_data' in result and result['image_data']:
+                    data_url = result['image_data']
+                    header, encoded = data_url.split(',', 1)
+                    decoded = base64.b64decode(encoded)
+                    out_path = os.path.join(app.config['PROCESSED_FOLDER'], out_filename)
+                    with open(out_path, 'wb') as f:
+                        f.write(decoded)
+                else:
+                    # No image data returned; ensure a file is written by asking processor to save to disk
+                    out_path = os.path.join(app.config['PROCESSED_FOLDER'], out_filename)
+                    # Try calling the processor again with output path (best-effort)
+                    try:
+                        # many processor functions accept output_path when implemented
+                        # call with provided operation
+                        if operation == 'upscale':
+                            processor.upscale_image(input_path, out_path, params.get('scale_factor', 2))
+                        elif operation == 'enhance':
+                            processor.enhance_image(input_path, out_path, params.get('brightness', 1.0), params.get('contrast', 1.0), params.get('sharpness', 1.0))
+                        elif operation == 'resize':
+                            processor.resize_image(input_path, out_path, int(params.get('width')), int(params.get('height')))
+                        elif operation == 'remove_background':
+                            processor.remove_background(input_path, out_path)
+                        elif operation == 'remove_area':
+                            processor.remove_selected_area(input_path, out_path, params.get('mask_data'))
+                        elif operation == 'humanize':
+                            processor.humanize_image(input_path, out_path, params.get('intensity', 0.7))
+                    except Exception:
+                        # ignore; we'll return success but download may fall back to data URL
+                        pass
+
+                return jsonify({
+                    'success': True,
+                    'image_data': result.get('image_data'),
+                    'filename': out_filename,
+                    'info': result.get('info')
+                })
+            except Exception as e:
+                logging.error(f"Error saving processed file: {str(e)}")
+                return jsonify({'error': f"Failed to save processed file: {str(e)}"}), 500
         else:
             return jsonify({'error': result['error']}), 500
             
