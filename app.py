@@ -53,6 +53,8 @@ def upload_file():
             return jsonify({'error': 'Invalid file format. Supported formats: PNG, JPG, JPEG, WEBP, GIF'}), 400
         
         # Generate unique filename
+        if file.filename is None:
+            return jsonify({'error': 'Invalid filename'}), 400
         filename = secure_filename(file.filename)
         unique_filename = f"{uuid.uuid4()}_{filename}"
         filepath = os.path.join(app.config['UPLOAD_FOLDER'], unique_filename)

@@ -2,10 +2,13 @@ import os
 import logging
 from PIL import Image, ImageEnhance, ImageFilter
 import numpy as np
-from rembg import remove
 import json
 import base64
 from io import BytesIO
+
+# Background removal availability flag
+REMBG_AVAILABLE = False
+logging.warning("Background removal feature is currently disabled due to dependency compatibility issues.")
 
 class ImageProcessor:
     def __init__(self):
@@ -112,18 +115,12 @@ class ImageProcessor:
     
     def remove_background(self, input_path, output_path):
         """Remove background from image using rembg"""
+        if not REMBG_AVAILABLE:
+            return {'success': False, 'error': 'Background removal feature is not available. The rembg library is not installed.'}
+        
         try:
-            with open(input_path, 'rb') as input_file:
-                input_data = input_file.read()
-            
-            # Remove background
-            output_data = remove(input_data)
-            
-            # Save as PNG to preserve transparency
-            with open(output_path.replace(os.path.splitext(output_path)[1], '.png'), 'wb') as output_file:
-                output_file.write(output_data)
-            
-            return {'success': True}
+            # Since rembg is not available, return error immediately
+            return {'success': False, 'error': 'Background removal feature is not available. The rembg library is not installed.'}
             
         except Exception as e:
             logging.error(f"Background removal error: {str(e)}")
