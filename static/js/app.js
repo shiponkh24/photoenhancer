@@ -7,6 +7,8 @@ let drawMode = true; // true for draw, false for erase
 let canvas = null;
 let ctx = null;
 let originalImageData = null;
+let currentZoom = 1.0;
+let processedImageElement = null;
 
 // Initialize the application
 document.addEventListener('DOMContentLoaded', function() {
@@ -48,6 +50,11 @@ function initializeEventListeners() {
     // Aspect ratio maintenance
     document.getElementById('new-width').addEventListener('input', maintainAspectRatio);
     document.getElementById('new-height').addEventListener('input', maintainAspectRatio);
+    
+    // Zoom controls
+    document.getElementById('zoom-in-btn').addEventListener('click', zoomIn);
+    document.getElementById('zoom-out-btn').addEventListener('click', zoomOut);
+    document.getElementById('zoom-reset-btn').addEventListener('click', resetZoom);
 }
 
 function initializeSliders() {
@@ -329,8 +336,26 @@ function displayProcessedImage(info) {
     const container = document.getElementById('processed-preview');
     const infoDiv = document.getElementById('processed-info');
     const downloadSection = document.getElementById('download-section');
+    const zoomControls = document.getElementById('zoom-controls');
+    const placeholder = document.getElementById('processed-placeholder');
     
-    container.innerHTML = `<img src="/preview/${processedFilename}" class="img-fluid rounded" style="max-height: 400px;">`;
+    // Hide placeholder
+    if (placeholder) {
+        placeholder.style.display = 'none';
+    }
+    
+    // Create zoomable image
+    container.innerHTML = `<img id="processed-image" src="/preview/${processedFilename}" class="rounded" style="max-height: none; cursor: move; transition: transform 0.2s ease;">`;
+    
+    // Get reference to the image element
+    processedImageElement = document.getElementById('processed-image');
+    
+    // Reset zoom
+    currentZoom = 1.0;
+    updateZoomDisplay();
+    
+    // Make image draggable when zoomed
+    makeImageDraggable(processedImageElement);
     
     infoDiv.innerHTML = `
         <small class="text-muted">
@@ -341,6 +366,7 @@ function displayProcessedImage(info) {
     `;
     
     downloadSection.classList.remove('d-none');
+    zoomControls.classList.remove('d-none');
 }
 
 function downloadProcessedImage() {
@@ -393,6 +419,110 @@ function showProcessingStatus() {
 
 function hideProcessingStatus() {
     document.getElementById('processing-status').classList.add('d-none');
+}
+
+// Zoom functionality
+function zoomIn() {
+    if (currentZoom < 3.0) {
+        currentZoom += 0.25;
+        updateZoomDisplay();
+        applyZoom();
+    }
+}
+
+function zoomOut() {
+    if (currentZoom > 0.25) {
+        currentZoom -= 0.25;
+        updateZoomDisplay();
+        applyZoom();
+    }
+}
+
+function resetZoom() {
+    currentZoom = 1.0;
+    updateZoomDisplay();
+    applyZoom();
+    // Reset position
+    if (processedImageElement) {
+        processedImageElement.style.transform = 'scale(1) translate(0, 0)';
+    }
+}
+
+function updateZoomDisplay() {
+    const zoomLevel = document.getElementById('zoom-level');
+    if (zoomLevel) {
+        zoomLevel.textContent = Math.round(currentZoom * 100) + '%';
+    }
+}
+
+function applyZoom() {
+    if (processedImageElement) {
+        // Get current translation values
+        const transform = processedImageElement.style.transform;
+        const translateMatch = transform.match(/translate\(([^,]+),\s*([^)]+)\)/);
+        const currentTranslateX = translateMatch ? translateMatch[1] : '0px';
+        const currentTranslateY = translateMatch ? translateMatch[2] : '0px';
+        
+        processedImageElement.style.transform = `scale(${currentZoom}) translate(${currentTranslateX}, ${currentTranslateY})`;
+    }
+}
+
+// Make image draggable when zoomed
+function makeImageDraggable(imageElement) {
+    let isDragging = false;
+    let startX, startY, initialTranslateX = 0, initialTranslateY = 0;
+    
+    imageElement.addEventListener('mousedown', function(e) {
+        if (currentZoom > 1) {
+            isDragging = true;
+            startX = e.clientX;
+            startY = e.clientY;
+            
+            // Get current translate values
+            const transform = imageElement.style.transform;
+            const translateMatch = transform.match(/translate\(([^,]+),\s*([^)]+)\)/);
+            if (translateMatch) {
+                initialTranslateX = parseFloat(translateMatch[1]);
+                initialTranslateY = parseFloat(translateMatch[2]);
+            } else {
+                initialTranslateX = 0;
+                initialTranslateY = 0;
+            }
+            
+            imageElement.style.cursor = 'grabbing';
+            e.preventDefault();
+        }
+    });
+    
+    document.addEventListener('mousemove', function(e) {
+        if (isDragging && currentZoom > 1) {
+            const deltaX = (e.clientX - startX) / currentZoom;
+            const deltaY = (e.clientY - startY) / currentZoom;
+            const newTranslateX = initialTranslateX + deltaX;
+            const newTranslateY = initialTranslateY + deltaY;
+            
+            imageElement.style.transform = `scale(${currentZoom}) translate(${newTranslateX}px, ${newTranslateY}px)`;
+        }
+    });
+    
+    document.addEventListener('mouseup', function() {
+        if (isDragging) {
+            isDragging = false;
+            if (processedImageElement) {
+                processedImageElement.style.cursor = currentZoom > 1 ? 'move' : 'default';
+            }
+        }
+    });
+    
+    // Handle mouse wheel zoom
+    imageElement.addEventListener('wheel', function(e) {
+        e.preventDefault();
+        if (e.deltaY < 0 && currentZoom < 3.0) {
+            zoomIn();
+        } else if (e.deltaY > 0 && currentZoom > 0.25) {
+            zoomOut();
+        }
+    });
 }
 
 function showAlert(message, type = 'info') {

@@ -158,3 +158,57 @@
         transform: rotate(360deg);
     }
 }
+
+/* Zoom functionality styles */
+.image-preview-container.zoomable {
+    overflow: auto;
+    position: relative;
+    user-select: none;
+}
+
+.image-preview-container.zoomable img {
+    transition: transform 0.2s ease;
+    display: block;
+    margin: 0 auto;
+}
+
+.zoom-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+.zoom-controls .btn {
+    font-size: 0.875rem;
+    padding: 0.25rem 0.5rem;
+}
+
+.zoom-controls .btn:hover {
+    transform: scale(1.05);
+}
+
+/* Improved processed image container */
+#processed-preview {
+    background: rgba(var(--bs-secondary-rgb), 0.05);
+    border: 2px dashed transparent;
+    transition: border-color 0.3s ease;
+}
+
+#processed-preview:not(:has(img)) {
+    border-color: var(--bs-border-color);
+}
+
+#processed-preview img {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    border: 1px solid rgba(var(--bs-border-color-rgb), 0.5);
+}
+
+/* Smooth scrolling for zoomed images */
+#processed-preview::-webkit-scrollbar {
+    width: 12px;
+    height: 12px;
+}
+
+#processed-preview::-webkit-scrollbar-corner {
+    background: var(--bs-body-bg);
+}
