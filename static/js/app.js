@@ -1,0 +1,416 @@
+// Global variables
+let currentFilename = null;
+let currentImageInfo = null;
+let processedFilename = null;
+let isDrawing = false;
+let drawMode = true; // true for draw, false for erase
+let canvas = null;
+let ctx = null;
+let originalImageData = null;
+
+// Initialize the application
+document.addEventListener('DOMContentLoaded', function() {
+    initializeEventListeners();
+    initializeSliders();
+});
+
+function initializeEventListeners() {
+    // File upload
+    const fileInput = document.getElementById('file-input');
+    const uploadArea = document.getElementById('upload-area');
+    
+    fileInput.addEventListener('change', handleFileSelect);
+    uploadArea.addEventListener('click', () => fileInput.click());
+    
+    // Drag and drop
+    uploadArea.addEventListener('dragover', handleDragOver);
+    uploadArea.addEventListener('dragleave', handleDragLeave);
+    uploadArea.addEventListener('drop', handleFileDrop);
+    
+    // Processing buttons
+    document.getElementById('upscale-btn').addEventListener('click', () => processImage('upscale'));
+    document.getElementById('enhance-btn').addEventListener('click', () => processImage('enhance'));
+    document.getElementById('resize-btn').addEventListener('click', () => processImage('resize'));
+    document.getElementById('remove-bg-btn').addEventListener('click', () => processImage('remove_background'));
+    document.getElementById('apply-selection-btn').addEventListener('click', () => processImage('remove_area'));
+    
+    // Reset button
+    document.getElementById('reset-enhance-btn').addEventListener('click', resetEnhanceSliders);
+    
+    // Canvas controls
+    document.getElementById('draw-mode-btn').addEventListener('click', () => setCanvasMode(true));
+    document.getElementById('erase-mode-btn').addEventListener('click', () => setCanvasMode(false));
+    document.getElementById('clear-selection-btn').addEventListener('click', clearCanvas);
+    
+    // Download button
+    document.getElementById('download-btn').addEventListener('click', downloadProcessedImage);
+    
+    // Aspect ratio maintenance
+    document.getElementById('new-width').addEventListener('input', maintainAspectRatio);
+    document.getElementById('new-height').addEventListener('input', maintainAspectRatio);
+}
+
+function initializeSliders() {
+    // Enhancement sliders
+    const brightnessSlider = document.getElementById('brightness-slider');
+    const contrastSlider = document.getElementById('contrast-slider');
+    const sharpnessSlider = document.getElementById('sharpness-slider');
+    const brushSizeSlider = document.getElementById('brush-size');
+    
+    brightnessSlider.addEventListener('input', (e) => {
+        document.getElementById('brightness-value').textContent = e.target.value;
+    });
+    
+    contrastSlider.addEventListener('input', (e) => {
+        document.getElementById('contrast-value').textContent = e.target.value;
+    });
+    
+    sharpnessSlider.addEventListener('input', (e) => {
+        document.getElementById('sharpness-value').textContent = e.target.value;
+    });
+    
+    brushSizeSlider.addEventListener('input', (e) => {
+        document.getElementById('brush-size-value').textContent = e.target.value + 'px';
+    });
+}
+
+// File handling functions
+function handleFileSelect(event) {
+    const file = event.target.files[0];
+    if (file) {
+        uploadFile(file);
+    }
+}
+
+function handleDragOver(event) {
+    event.preventDefault();
+    event.currentTarget.classList.add('dragover');
+}
+
+function handleDragLeave(event) {
+    event.currentTarget.classList.remove('dragover');
+}
+
+function handleFileDrop(event) {
+    event.preventDefault();
+    event.currentTarget.classList.remove('dragover');
+    
+    const files = event.dataTransfer.files;
+    if (files.length > 0) {
+        uploadFile(files[0]);
+    }
+}
+
+function uploadFile(file) {
+    // Validate file type
+    const allowedTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif'];
+    if (!allowedTypes.includes(file.type)) {
+        showAlert('Invalid file type. Please upload PNG, JPG, JPEG, WEBP, or GIF files.', 'danger');
+        return;
+    }
+    
+    // Validate file size (50MB)
+    if (file.size > 50 * 1024 * 1024) {
+        showAlert('File size too large. Please upload files smaller than 50MB.', 'danger');
+        return;
+    }
+    
+    const formData = new FormData();
+    formData.append('file', file);
+    
+    // Show upload progress
+    showUploadProgress();
+    
+    fetch('/upload', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        hideUploadProgress();
+        
+        if (data.success) {
+            currentFilename = data.filename;
+            currentImageInfo = data.info;
+            displayOriginalImage();
+            showImageWorkspace();
+        } else {
+            showAlert(data.error || 'Upload failed', 'danger');
+        }
+    })
+    .catch(error => {
+        hideUploadProgress();
+        console.error('Upload error:', error);
+        showAlert('Upload failed. Please try again.', 'danger');
+    });
+}
+
+function displayOriginalImage() {
+    const img = document.getElementById('original-image');
+    const info = document.getElementById('original-info');
+    
+    img.src = `/preview/${currentFilename}`;
+    img.onload = function() {
+        // Update image info
+        info.innerHTML = `
+            <small class="text-muted">
+                ${currentImageInfo.width} × ${currentImageInfo.height} pixels | 
+                ${currentImageInfo.format} | 
+                ${currentImageInfo.size_mb} MB
+            </small>
+        `;
+        
+        // Initialize canvas for selection tool
+        initializeSelectionCanvas();
+        
+        // Set default resize values
+        document.getElementById('new-width').value = currentImageInfo.width;
+        document.getElementById('new-height').value = currentImageInfo.height;
+    };
+}
+
+function initializeSelectionCanvas() {
+    canvas = document.getElementById('selection-canvas');
+    ctx = canvas.getContext('2d');
+    
+    const img = document.getElementById('original-image');
+    
+    // Set canvas size to match displayed image
+    const rect = img.getBoundingClientRect();
+    canvas.width = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    canvas.style.width = Math.min(500, rect.width) + 'px';
+    canvas.style.height = (canvas.height * Math.min(500, rect.width) / canvas.width) + 'px';
+    
+    // Store original image data
+    const tempCanvas = document.createElement('canvas');
+    const tempCtx = tempCanvas.getContext('2d');
+    tempCanvas.width = canvas.width;
+    tempCanvas.height = canvas.height;
+    tempCtx.drawImage(img, 0, 0);
+    originalImageData = tempCtx.getImageData(0, 0, canvas.width, canvas.height);
+    
+    // Draw original image on canvas
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    
+    // Add drawing event listeners
+    canvas.addEventListener('mousedown', startDrawing);
+    canvas.addEventListener('mousemove', draw);
+    canvas.addEventListener('mouseup', stopDrawing);
+    canvas.addEventListener('mouseout', stopDrawing);
+    
+    // Touch events for mobile
+    canvas.addEventListener('touchstart', handleTouch);
+    canvas.addEventListener('touchmove', handleTouch);
+    canvas.addEventListener('touchend', stopDrawing);
+}
+
+// Canvas drawing functions
+function startDrawing(event) {
+    isDrawing = true;
+    draw(event);
+}
+
+function draw(event) {
+    if (!isDrawing) return;
+    
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    
+    const x = (event.clientX - rect.left) * scaleX;
+    const y = (event.clientY - rect.top) * scaleY;
+    
+    const brushSize = parseInt(document.getElementById('brush-size').value);
+    
+    ctx.globalCompositeOperation = drawMode ? 'source-over' : 'destination-out';
+    ctx.beginPath();
+    ctx.arc(x, y, brushSize / 2, 0, 2 * Math.PI);
+    ctx.fillStyle = drawMode ? 'rgba(255, 0, 0, 0.5)' : 'transparent';
+    ctx.fill();
+}
+
+function stopDrawing() {
+    isDrawing = false;
+}
+
+function handleTouch(event) {
+    event.preventDefault();
+    const touch = event.touches[0];
+    const mouseEvent = new MouseEvent(event.type === 'touchstart' ? 'mousedown' : 
+                                     event.type === 'touchmove' ? 'mousemove' : 'mouseup', {
+        clientX: touch.clientX,
+        clientY: touch.clientY
+    });
+    canvas.dispatchEvent(mouseEvent);
+}
+
+function setCanvasMode(isDraw) {
+    drawMode = isDraw;
+    document.getElementById('draw-mode-btn').classList.toggle('active', isDraw);
+    document.getElementById('erase-mode-btn').classList.toggle('active', !isDraw);
+    canvas.className = isDraw ? '' : 'erase-mode';
+}
+
+function clearCanvas() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.putImageData(originalImageData, 0, 0);
+}
+
+// Image processing functions
+function processImage(operation) {
+    if (!currentFilename) {
+        showAlert('Please upload an image first', 'warning');
+        return;
+    }
+    
+    let params = {};
+    
+    // Gather parameters based on operation
+    switch (operation) {
+        case 'upscale':
+            params.scale_factor = parseInt(document.getElementById('scale-factor').value);
+            break;
+        case 'enhance':
+            params.brightness = parseFloat(document.getElementById('brightness-slider').value);
+            params.contrast = parseFloat(document.getElementById('contrast-slider').value);
+            params.sharpness = parseFloat(document.getElementById('sharpness-slider').value);
+            break;
+        case 'resize':
+            params.width = parseInt(document.getElementById('new-width').value);
+            params.height = parseInt(document.getElementById('new-height').value);
+            
+            if (!params.width || !params.height || params.width < 1 || params.height < 1) {
+                showAlert('Please enter valid width and height values', 'warning');
+                return;
+            }
+            break;
+        case 'remove_area':
+            if (!canvas) {
+                showAlert('Please draw on the image to select areas to remove', 'warning');
+                return;
+            }
+            params.mask_data = canvas.toDataURL();
+            break;
+    }
+    
+    showProcessingStatus();
+    
+    fetch('/process', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            filename: currentFilename,
+            operation: operation,
+            params: params
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        hideProcessingStatus();
+        
+        if (data.success) {
+            processedFilename = data.processed_filename;
+            displayProcessedImage(data.info);
+        } else {
+            showAlert(data.error || 'Processing failed', 'danger');
+        }
+    })
+    .catch(error => {
+        hideProcessingStatus();
+        console.error('Processing error:', error);
+        showAlert('Processing failed. Please try again.', 'danger');
+    });
+}
+
+function displayProcessedImage(info) {
+    const container = document.getElementById('processed-preview');
+    const infoDiv = document.getElementById('processed-info');
+    const downloadSection = document.getElementById('download-section');
+    
+    container.innerHTML = `<img src="/preview/${processedFilename}" class="img-fluid rounded" style="max-height: 400px;">`;
+    
+    infoDiv.innerHTML = `
+        <small class="text-muted">
+            ${info.width} × ${info.height} pixels | 
+            ${info.format} | 
+            ${info.size_mb} MB
+        </small>
+    `;
+    
+    downloadSection.classList.remove('d-none');
+}
+
+function downloadProcessedImage() {
+    if (processedFilename) {
+        window.open(`/download/${processedFilename}`, '_blank');
+    }
+}
+
+// Utility functions
+function maintainAspectRatio(event) {
+    if (!document.getElementById('maintain-aspect').checked || !currentImageInfo) return;
+    
+    const aspectRatio = currentImageInfo.width / currentImageInfo.height;
+    const widthInput = document.getElementById('new-width');
+    const heightInput = document.getElementById('new-height');
+    
+    if (event.target.id === 'new-width') {
+        heightInput.value = Math.round(widthInput.value / aspectRatio);
+    } else {
+        widthInput.value = Math.round(heightInput.value * aspectRatio);
+    }
+}
+
+function resetEnhanceSliders() {
+    document.getElementById('brightness-slider').value = 1;
+    document.getElementById('contrast-slider').value = 1;
+    document.getElementById('sharpness-slider').value = 1;
+    document.getElementById('brightness-value').textContent = '1.0';
+    document.getElementById('contrast-value').textContent = '1.0';
+    document.getElementById('sharpness-value').textContent = '1.0';
+}
+
+function showImageWorkspace() {
+    document.getElementById('image-workspace').classList.remove('d-none');
+}
+
+function showUploadProgress() {
+    document.getElementById('upload-progress').classList.remove('d-none');
+    document.querySelector('.progress-bar').style.width = '100%';
+}
+
+function hideUploadProgress() {
+    document.getElementById('upload-progress').classList.add('d-none');
+    document.querySelector('.progress-bar').style.width = '0%';
+}
+
+function showProcessingStatus() {
+    document.getElementById('processing-status').classList.remove('d-none');
+}
+
+function hideProcessingStatus() {
+    document.getElementById('processing-status').classList.add('d-none');
+}
+
+function showAlert(message, type = 'info') {
+    // Create alert element
+    const alertDiv = document.createElement('div');
+    alertDiv.className = `alert alert-${type} alert-dismissible fade show position-fixed`;
+    alertDiv.style.cssText = 'top: 20px; right: 20px; z-index: 1055; min-width: 300px;';
+    alertDiv.innerHTML = `
+        ${message}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    `;
+    
+    document.body.appendChild(alertDiv);
+    
+    // Auto-dismiss after 5 seconds
+    setTimeout(() => {
+        if (alertDiv.parentNode) {
+            alertDiv.remove();
+        }
+    }, 5000);
+}
